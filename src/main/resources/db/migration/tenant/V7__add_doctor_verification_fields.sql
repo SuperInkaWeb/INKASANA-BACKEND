@@ -1,0 +1,11 @@
+ALTER TABLE doctors
+    ADD COLUMN IF NOT EXISTS verification_status VARCHAR(30) NOT NULL DEFAULT 'PENDING';
+
+ALTER TABLE doctors
+    ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP;
+
+ALTER TABLE doctors
+    ADD COLUMN IF NOT EXISTS verified_by UUID;
+
+ALTER TABLE doctors
+    ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR(500);

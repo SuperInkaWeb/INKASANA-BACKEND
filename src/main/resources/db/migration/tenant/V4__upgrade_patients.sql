@@ -1,0 +1,11 @@
+ALTER TABLE patients
+    ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE';
+
+ALTER TABLE patients
+    ADD COLUMN IF NOT EXISTS emergency_contact_name VARCHAR(180);
+
+ALTER TABLE patients
+    ADD COLUMN IF NOT EXISTS emergency_contact_phone VARCHAR(50);
+
+ALTER TABLE patients
+    ADD COLUMN IF NOT EXISTS notes TEXT;
