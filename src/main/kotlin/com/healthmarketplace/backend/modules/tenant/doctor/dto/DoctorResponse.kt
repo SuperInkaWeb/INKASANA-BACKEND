@@ -22,6 +22,10 @@ data class DoctorResponse(
     val consultationPrice: BigDecimal?,
     val consultationDurationMinutes: Int?,
     val specialties: List<DoctorSpecialtyResponse> = emptyList(),
+    val profileImageUrl: String?,
+    val availableDays: List<String>,
+    val availableStartTime: String?,
+    val availableEndTime: String?,
     val createdAt: LocalDateTime,
     val updatedAt: LocalDateTime
 )

@@ -67,11 +67,42 @@ class GlobalMarketplaceProfile(
     @Column(name = "cover_image_url")
     var coverImageUrl: String? = null,
 
+    @Column(name = "carousel_image_url_1")
+    var carouselImageUrl1: String? = null,
+
+    @Column(name = "carousel_image_url_2")
+    var carouselImageUrl2: String? = null,
+
+    @Column(name = "page_color")
+    var pageColor: String? = null,
+
+    @Column(name = "button_color")
+    var buttonColor: String? = null,
+
+    @Column(name = "subscription_color")
+    var subscriptionColor: String? = null,
+
+    @Column(name = "appearance_config", columnDefinition = "TEXT")
+    var appearanceConfig: String? = null,
+
     @Column(name = "consultation_price")
     var consultationPrice: BigDecimal? = null,
 
     @Column(name = "consultation_duration_minutes")
     var consultationDurationMinutes: Int? = null,
+
+    @Column(name = "available_days")
+    var availableDays: String? = null,
+
+    @Column(name = "available_start_time")
+    var availableStartTime: String? = null,
+
+    @Column(name = "available_end_time")
+    var availableEndTime: String? = null,
+
+    // JSON con los nombres de las especialidades del doctor, ej: ["Cardiología","Pediatría"]
+    @Column(name = "specialties", columnDefinition = "TEXT")
+    var specialties: String? = null,
 
     @Column(name = "is_published", nullable = false)
     var isPublished: Boolean = true,

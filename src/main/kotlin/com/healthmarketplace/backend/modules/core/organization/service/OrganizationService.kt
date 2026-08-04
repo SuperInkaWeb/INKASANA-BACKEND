@@ -8,6 +8,7 @@ import com.healthmarketplace.backend.modules.core.organization.entity.Organizati
 import com.healthmarketplace.backend.modules.core.organization.repository.OrganizationRepository
 import com.healthmarketplace.backend.modules.core.tenant.service.TenantProvisioningService
 import com.healthmarketplace.backend.modules.tenant.bootstrap.service.TenantBootstrapService
+import com.healthmarketplace.backend.modules.tenant.marketplace.service.MarketplaceProfileService
 import org.springframework.stereotype.Service
 import java.time.LocalDateTime
 import java.util.UUID
@@ -16,7 +17,8 @@ import java.util.UUID
 class OrganizationService(
     private val organizationRepository: OrganizationRepository,
     private val tenantProvisioningService: TenantProvisioningService,
-    private val tenantBootstrapService: TenantBootstrapService
+    private val tenantBootstrapService: TenantBootstrapService,
+    private val marketplaceProfileService: MarketplaceProfileService
 ) {
 
     fun create(request: CreateOrganizationRequest): OrganizationResponse {
@@ -67,7 +69,19 @@ class OrganizationService(
             saved.provisioningError = null
             saved.updatedAt = LocalDateTime.now()
 
-            return organizationRepository.save(saved).toResponse()
+            val savedOrganization = organizationRepository.save(saved)
+
+            if (savedOrganization.status == OrganizationStatus.ACTIVE) {
+                try {
+                    marketplaceProfileService.autoPublishForActiveOrganization(savedOrganization)
+                } catch (ex: Exception) {
+                    // No bloqueamos la creación del tenant si falla la publicación
+                    // en el marketplace; el owner puede publicarla luego a mano.
+                    println("No se pudo publicar la clínica en el marketplace: ${ex.message}")
+                }
+            }
+
+            return savedOrganization.toResponse()
 
         } catch (ex: Exception) {
             saved.schemaReady = false
@@ -102,7 +116,19 @@ class OrganizationService(
         organization.status = request.status
         organization.updatedAt = LocalDateTime.now()
 
-        return organizationRepository.save(organization).toResponse()
+        val savedOrganization = organizationRepository.save(organization)
+
+        try {
+            if (savedOrganization.status == OrganizationStatus.ACTIVE) {
+                marketplaceProfileService.autoPublishForActiveOrganization(savedOrganization)
+            } else {
+                marketplaceProfileService.hideByOrganization(savedOrganization)
+            }
+        } catch (ex: Exception) {
+            println("No se pudo actualizar el marketplace para la organización: ${ex.message}")
+        }
+
+        return savedOrganization.toResponse()
     }
 
     private fun normalizeSlug(slug: String): String {

@@ -13,5 +13,9 @@ data class CreateDoctorRequest(
     val bio: String? = null,
     val consultationPrice: BigDecimal? = null,
     val consultationDurationMinutes: Int? = null,
-    val specialtyIds: List<UUID> = emptyList()
+    val specialtyIds: List<UUID> = emptyList(),
+    val profileImageUrl: String? = null,
+    val availableDays: List<String> = emptyList(),
+    val availableStartTime: String? = null,
+    val availableEndTime: String? = null
 )

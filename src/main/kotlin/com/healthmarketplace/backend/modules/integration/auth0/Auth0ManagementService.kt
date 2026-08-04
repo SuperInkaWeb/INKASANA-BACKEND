@@ -35,6 +35,11 @@ class Auth0ManagementService(
             "verify_email" to true
         )
 
+        println("TOKEN = ${token.take(30)}...")
+        println("BODY REQUEST = $body")
+
+
+
         return try {
             val response = restTemplate.postForEntity(
                 "https://${properties.domain}/api/v2/users",
@@ -50,7 +55,13 @@ class Auth0ManagementService(
             auth0UserId
         } catch (ex: HttpClientErrorException.Conflict) {
             throw BusinessException("Ya existe un usuario Auth0 con ese correo")
-        } catch (ex: HttpClientErrorException) {
+        }
+        catch (ex: HttpClientErrorException) {
+
+            println("STATUS = ${ex.statusCode}")
+            println("BODY = ${ex.responseBodyAsString}")
+            ex.printStackTrace()
+
             throw BusinessException("Error creando usuario en Auth0: ${ex.responseBodyAsString}")
         }
     }
@@ -59,6 +70,12 @@ class Auth0ManagementService(
         val headers = HttpHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
         }
+
+        println("DOMAIN = ${properties.domain}")
+        println("CLIENT_ID = ${properties.clientId}")
+        println("AUDIENCE = ${properties.audience}")
+
+
 
         val body = mapOf(
             "client_id" to properties.clientId,

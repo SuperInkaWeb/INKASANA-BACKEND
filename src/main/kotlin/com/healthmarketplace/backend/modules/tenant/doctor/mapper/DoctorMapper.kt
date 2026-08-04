@@ -24,6 +24,14 @@ fun Doctor.toResponse(
         consultationPrice = this.consultationPrice,
         consultationDurationMinutes = this.consultationDurationMinutes,
         specialties = specialties,
+        profileImageUrl = this.profileImageUrl,
+        availableDays = this.availableDays
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?: emptyList(),
+        availableStartTime = this.availableStartTime,
+        availableEndTime = this.availableEndTime,
         createdAt = this.createdAt,
         updatedAt = this.updatedAt
     )

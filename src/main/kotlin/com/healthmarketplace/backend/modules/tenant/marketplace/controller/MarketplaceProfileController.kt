@@ -5,6 +5,7 @@ import com.healthmarketplace.backend.modules.tenant.marketplace.dto.MarketplaceP
 import com.healthmarketplace.backend.modules.tenant.marketplace.dto.UpdateMarketplaceProfileRequest
 import com.healthmarketplace.backend.modules.tenant.marketplace.service.MarketplaceProfileService
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
 
 @RestController
@@ -16,6 +17,26 @@ class MarketplaceProfileController(
     @GetMapping
     fun findAll(): List<MarketplaceProfileResponse> {
         return marketplaceProfileService.findAll()
+    }
+
+    @GetMapping("/organization")
+    fun findMyOrganizationProfile(): MarketplaceProfileResponse {
+        return marketplaceProfileService.findMyOrganizationProfile()
+    }
+
+    @PatchMapping("/organization")
+    fun updateMyOrganizationProfile(
+        @RequestBody request: UpdateMarketplaceProfileRequest
+    ): MarketplaceProfileResponse {
+        return marketplaceProfileService.updateMyOrganizationProfile(request)
+    }
+
+    @PostMapping("/organization/images/{imageType}") // sube/reemplaza la foto de perfil o portada (drag & drop)
+    fun uploadMyOrganizationImage(
+        @PathVariable imageType: String,
+        @RequestParam("file") file: MultipartFile
+    ): MarketplaceProfileResponse {
+        return marketplaceProfileService.uploadMyOrganizationImage(imageType, file)
     }
 
     @GetMapping("/{id}")

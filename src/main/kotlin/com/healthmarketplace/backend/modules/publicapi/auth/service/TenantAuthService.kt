@@ -13,14 +13,26 @@ import com.healthmarketplace.backend.modules.publicapi.auth.dto.TenantUserSessio
 import com.healthmarketplace.backend.modules.tenant.user.model.TenantUserStatus
 import com.healthmarketplace.backend.modules.tenant.user.repository.TenantUserRepository
 import org.springframework.stereotype.Service
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.LocalDateTime
 
 @Service
 class TenantAuthService(
     private val organizationRepository: OrganizationRepository,
     private val tenantUserRepository: TenantUserRepository,
-    private val jwtTokenService: JwtTokenService
+    private val jwtTokenService: JwtTokenService,
+    transactionManager: PlatformTransactionManager
 ) {
+
+    // Se usa TransactionTemplate (transacción programática) en vez de
+    // @Transactional para poder abrir la transacción DESPUÉS de haber
+    // llamado a TenantContext.setTenant(...). Así el find + update + save
+    // corren dentro de UNA sola sesión de Hibernate / UNA sola conexión,
+    // en vez de dos conexiones separadas, que era la ventana donde se
+    // colaba el error "relation tenant_users does not exist" cuando una
+    // conexión anterior del pool quedaba con el search_path equivocado.
+    private val transactionTemplate = TransactionTemplate(transactionManager)
 
     fun login(request: TenantLoginRequest): TenantLoginResponse {
         val slug = request.slug.trim().lowercase()
@@ -39,15 +51,17 @@ class TenantAuthService(
         return try {
             TenantContext.setTenant(organization.schemaName)
 
-            val user = tenantUserRepository
-                .findByEmailAndStatus(email, TenantUserStatus.ACTIVE)
-                .orElseThrow {
-                    BusinessException("Usuario no encontrado o inactivo")
-                }
+            val user = transactionTemplate.execute {
+                val foundUser = tenantUserRepository
+                    .findByEmailAndStatus(email, TenantUserStatus.ACTIVE)
+                    .orElseThrow {
+                        BusinessException("Usuario no encontrado o inactivo")
+                    }
 
-            user.lastLogin = LocalDateTime.now()
-            user.updatedAt = LocalDateTime.now()
-            tenantUserRepository.save(user)
+                foundUser.lastLogin = LocalDateTime.now()
+                foundUser.updatedAt = LocalDateTime.now()
+                tenantUserRepository.save(foundUser)
+            }!!
 
             TenantLoginResponse(
                 organizationId = organization.id,
@@ -120,23 +134,25 @@ class TenantAuthService(
         return try {
             TenantContext.setTenant(organization.schemaName)
 
-            val user = tenantUserRepository
-                .findByEmailAndStatus(normalizedEmail, TenantUserStatus.ACTIVE)
-                .orElseThrow {
-                    BusinessException("Usuario no encontrado o inactivo")
+            val user = transactionTemplate.execute {
+                val foundUser = tenantUserRepository
+                    .findByEmailAndStatus(normalizedEmail, TenantUserStatus.ACTIVE)
+                    .orElseThrow {
+                        BusinessException("Usuario no encontrado o inactivo")
+                    }
+
+                if (!foundUser.auth0Id.isNullOrBlank() && foundUser.auth0Id != normalizedAuth0Id) {
+                    throw BusinessException("Este correo ya está vinculado a otra cuenta Auth0")
                 }
 
-            if (!user.auth0Id.isNullOrBlank() && user.auth0Id != normalizedAuth0Id) {
-                throw BusinessException("Este correo ya está vinculado a otra cuenta Auth0")
-            }
+                if (foundUser.auth0Id.isNullOrBlank()) {
+                    foundUser.auth0Id = normalizedAuth0Id
+                }
 
-            if (user.auth0Id.isNullOrBlank()) {
-                user.auth0Id = normalizedAuth0Id
-            }
-
-            user.lastLogin = LocalDateTime.now()
-            user.updatedAt = LocalDateTime.now()
-            tenantUserRepository.save(user)
+                foundUser.lastLogin = LocalDateTime.now()
+                foundUser.updatedAt = LocalDateTime.now()
+                tenantUserRepository.save(foundUser)
+            }!!
 
             val token = jwtTokenService.createTenantToken(
                 userId = requireNotNull(user.id) { "El usuario no tiene ID" },

@@ -9,6 +9,7 @@ import com.healthmarketplace.backend.modules.tenant.doctor.service.DoctorService
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
 
 @RestController
@@ -29,7 +30,7 @@ class DoctorController(
         )
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/{id}") // solo sirve para buscar o listar
     @PreAuthorize("hasAnyRole('OWNER','ADMIN','DOCTOR','THERAPIST','RECEPTIONIST')")
     fun findById(
         @PathVariable id: UUID
@@ -37,7 +38,7 @@ class DoctorController(
         return doctorService.findById(id)
     }
 
-    @PostMapping
+    @PostMapping //creo los doctores
     @PreAuthorize("hasAnyRole('OWNER','ADMIN')")
     fun create(
         @RequestBody request: CreateDoctorRequest
@@ -54,7 +55,16 @@ class DoctorController(
         return doctorService.update(id, request)
     }
 
-    @PatchMapping("/{id}/deactivate")
+    @PostMapping("/{id}/photo") // sube/reemplaza la foto de perfil del doctor (drag & drop)
+    @PreAuthorize("hasAnyRole('OWNER','ADMIN')")
+    fun uploadPhoto(
+        @PathVariable id: UUID,
+        @RequestParam("photo") photo: MultipartFile
+    ): DoctorResponse {
+        return doctorService.updateProfilePhoto(id, photo)
+    }
+
+    @PatchMapping("/{id}/deactivate") //patch edita los edoctores , sirve para editar
     @PreAuthorize("hasAnyRole('OWNER','ADMIN')")
     fun deactivate(
         @PathVariable id: UUID

@@ -1,5 +1,5 @@
 package com.healthmarketplace.backend.modules.tenant.doctor.service
-
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.healthmarketplace.backend.common.exception.BusinessException
 import com.healthmarketplace.backend.modules.core.specialty.repository.GlobalSpecialtyRepository
 import com.healthmarketplace.backend.modules.tenant.doctor.dto.CreateDoctorRequest
@@ -13,22 +13,28 @@ import com.healthmarketplace.backend.modules.tenant.doctor.model.DoctorStatus
 import com.healthmarketplace.backend.modules.tenant.doctor.model.DoctorVerificationStatus
 import com.healthmarketplace.backend.modules.tenant.doctor.repository.DoctorRepository
 import com.healthmarketplace.backend.modules.tenant.doctor.repository.DoctorSpecialtyRepository
+import com.healthmarketplace.backend.modules.tenant.marketplace.service.MarketplaceProfileService
 import com.healthmarketplace.backend.modules.tenant.user.model.TenantUserRole
 import com.healthmarketplace.backend.modules.tenant.user.model.TenantUserStatus
 import com.healthmarketplace.backend.modules.tenant.user.repository.TenantUserRepository
+import com.healthmarketplace.backend.modules.publicapi.media.service.MediaFileService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.web.multipart.MultipartFile
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder
 import java.time.LocalDateTime
 import java.util.UUID
-
 @Service
 class DoctorService(
     private val doctorRepository: DoctorRepository,
     private val tenantUserRepository: TenantUserRepository,
     private val doctorSpecialtyRepository: DoctorSpecialtyRepository,
-    private val globalSpecialtyRepository: GlobalSpecialtyRepository
+    private val globalSpecialtyRepository: GlobalSpecialtyRepository,
+    private val marketplaceProfileService: MarketplaceProfileService,
+    private val mediaFileService: MediaFileService
 ) {
 
+    @Transactional(readOnly = true)
     fun findAll(
         status: DoctorStatus?,
         search: String?
@@ -56,13 +62,47 @@ class DoctorService(
             }
         }
 
+        if (doctors.isEmpty()) {
+            return emptyList()
+        }
+
+        // Antes: por cada doctor se hacían 2 consultas extra (relaciones +
+        // especialidades), es decir 1 + 2*N consultas para listar N
+        // doctores. Con varias decenas de doctores eso abre y cierra
+        // muchísimas conexiones contra el pool (cada una re-fijando el
+        // schema del tenant), lo que producía la demora ("carga pero
+        // demorando mucho") e incluso agotaba el pool de conexiones bajo
+        // carga. Ahora se traen TODAS las relaciones y especialidades en
+        // una sola consulta cada una, y se agrupan en memoria.
+        val doctorIds = doctors.mapNotNull { it.id }
+
+        val allRelations = doctorSpecialtyRepository.findAllByDoctorIdIn(doctorIds)
+        val relationsByDoctorId = allRelations.groupBy { it.doctorId }
+
+        val allSpecialtyIds = allRelations.map { it.specialtyId }.distinct()
+        val specialtiesById = if (allSpecialtyIds.isEmpty()) {
+            emptyMap()
+        } else {
+            globalSpecialtyRepository.findAllById(allSpecialtyIds).associateBy { it.id }
+        }
+
         return doctors.map { doctor ->
-            doctor.toResponse(
-                specialties = getDoctorSpecialties(doctor.id!!)
-            )
+            val specialties = relationsByDoctorId[doctor.id]
+                .orEmpty()
+                .mapNotNull { relation -> specialtiesById[relation.specialtyId] }
+                .map {
+                    DoctorSpecialtyResponse(
+                        id = it.id!!,
+                        name = it.name,
+                        description = it.description
+                    )
+                }
+
+            doctor.toResponse(specialties = specialties)
         }
     }
 
+    @Transactional(readOnly = true)
     fun findById(id: UUID): DoctorResponse {
         val doctor = doctorRepository.findById(id)
             .orElseThrow { BusinessException("Doctor no encontrado") }
@@ -118,6 +158,12 @@ class DoctorService(
             bio = request.bio?.trim()?.ifBlank { null },
             consultationPrice = request.consultationPrice,
             consultationDurationMinutes = request.consultationDurationMinutes,
+            profileImageUrl = request.profileImageUrl?.trim()?.ifBlank { null },
+            availableDays = request.availableDays
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString(","),
+            availableStartTime = request.availableStartTime?.trim()?.ifBlank { null },
+            availableEndTime = request.availableEndTime?.trim()?.ifBlank { null },
             createdAt = now,
             updatedAt = now
         )
@@ -140,6 +186,13 @@ class DoctorService(
             .orElseThrow { BusinessException("Doctor no encontrado") }
 
         request.tenantUserId?.let { tenantUserId ->
+            if (tenantUserId == doctor.tenantUserId) {
+                // No cambió el usuario asignado: no hace falta revalidar
+                // su estado, para no bloquear ediciones normales (como
+                // subir la foto) por algo que ni se está modificando.
+                return@let
+            }
+
             val tenantUser = tenantUserRepository.findById(tenantUserId)
                 .orElseThrow { BusinessException("Usuario tenant no encontrado") }
 
@@ -217,6 +270,22 @@ class DoctorService(
             doctor.consultationDurationMinutes = it
         }
 
+        request.profileImageUrl?.let {
+            doctor.profileImageUrl = it.trim().ifBlank { null }
+        }
+
+        request.availableDays?.let {
+            doctor.availableDays = it.takeIf { days -> days.isNotEmpty() }?.joinToString(",")
+        }
+
+        request.availableStartTime?.let {
+            doctor.availableStartTime = it.trim().ifBlank { null }
+        }
+
+        request.availableEndTime?.let {
+            doctor.availableEndTime = it.trim().ifBlank { null }
+        }
+
         doctor.updatedAt = LocalDateTime.now()
 
         val savedDoctor = doctorRepository.save(doctor)
@@ -224,6 +293,48 @@ class DoctorService(
         syncDoctorSpecialties(
             doctorId = savedDoctor.id!!,
             specialtyIds = request.specialtyIds
+        )
+
+        if (
+            savedDoctor.verificationStatus == DoctorVerificationStatus.APPROVED &&
+            savedDoctor.status == DoctorStatus.ACTIVE
+        ) {
+            marketplaceProfileService.autoPublishForApprovedDoctor(savedDoctor)
+        }
+
+        return savedDoctor.toResponse(
+            specialties = getDoctorSpecialties(savedDoctor.id!!)
+        )
+    }
+
+    /**
+     * Sube una imagen (arrastrada/soltada desde el formulario) y la asocia
+     * como foto de perfil del doctor. La imagen se guarda en un almacenamiento
+     * público independiente del tenant, y la URL resultante se guarda en
+     * `profileImageUrl`. También se sincroniza hacia el perfil de marketplace
+     * (si ya existe), para que la foto aparezca en el card público y en el
+     * detalle del doctor sin pasos manuales adicionales.
+     */
+    @Transactional
+    fun updateProfilePhoto(id: UUID, file: MultipartFile): DoctorResponse {
+        val doctor = doctorRepository.findById(id)
+            .orElseThrow { BusinessException("Doctor no encontrado") }
+
+        val mediaFile = mediaFileService.storeImage(file)
+
+        val publicUrl = ServletUriComponentsBuilder
+            .fromCurrentContextPath()
+            .path("/api/public/media/${mediaFile.id}")
+            .toUriString()
+
+        doctor.profileImageUrl = publicUrl
+        doctor.updatedAt = LocalDateTime.now()
+
+        val savedDoctor = doctorRepository.save(doctor)
+
+        marketplaceProfileService.syncDoctorPhoto(
+            doctorId = savedDoctor.id!!,
+            imageUrl = publicUrl
         )
 
         return savedDoctor.toResponse(
@@ -241,6 +352,8 @@ class DoctorService(
 
         val savedDoctor = doctorRepository.save(doctor)
 
+        marketplaceProfileService.hideByDoctorId(savedDoctor.id!!)
+
         return savedDoctor.toResponse(
             specialties = getDoctorSpecialties(savedDoctor.id!!)
         )
@@ -255,6 +368,10 @@ class DoctorService(
         doctor.updatedAt = LocalDateTime.now()
 
         val savedDoctor = doctorRepository.save(doctor)
+
+        if (savedDoctor.verificationStatus == DoctorVerificationStatus.APPROVED) {
+            marketplaceProfileService.autoPublishForApprovedDoctor(savedDoctor)
+        }
 
         return savedDoctor.toResponse(
             specialties = getDoctorSpecialties(savedDoctor.id!!)
@@ -280,6 +397,10 @@ class DoctorService(
         doctor.updatedAt = LocalDateTime.now()
 
         val savedDoctor = doctorRepository.save(doctor)
+
+        if (savedDoctor.status == DoctorStatus.ACTIVE) {
+            marketplaceProfileService.autoPublishForApprovedDoctor(savedDoctor)
+        }
 
         return savedDoctor.toResponse(
             specialties = getDoctorSpecialties(savedDoctor.id!!)
@@ -308,6 +429,8 @@ class DoctorService(
         doctor.updatedAt = LocalDateTime.now()
 
         val savedDoctor = doctorRepository.save(doctor)
+
+        marketplaceProfileService.hideByDoctorId(savedDoctor.id!!)
 
         return savedDoctor.toResponse(
             specialties = getDoctorSpecialties(savedDoctor.id!!)

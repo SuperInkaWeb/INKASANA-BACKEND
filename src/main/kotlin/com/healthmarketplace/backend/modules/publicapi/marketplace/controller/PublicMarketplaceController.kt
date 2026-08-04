@@ -5,6 +5,10 @@ import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.Marketpla
 import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.MarketplaceDoctorDetailResponse
 import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.MarketplaceDoctorSearchResponse
 import com.healthmarketplace.backend.modules.publicapi.marketplace.service.PublicMarketplaceService
+import com.healthmarketplace.backend.modules.tenant.agenda.dto.DaySlotsResponse
+import org.springframework.format.annotation.DateTimeFormat
+import java.time.LocalDate
+import java.util.UUID
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
@@ -60,5 +64,18 @@ class PublicMarketplaceController(
         @PathVariable slug: String
     ): MarketplaceClinicDetailResponse {
         return publicMarketplaceService.getClinicBySlug(slug)
+    }
+
+    @GetMapping("/clinics/{slug}/doctors")
+    fun getDoctorsByClinicSlug(@PathVariable slug: String): List<MarketplaceDoctorSearchResponse> {
+        return publicMarketplaceService.getDoctorsByClinicSlug(slug)
+    }
+    @GetMapping("/doctors/{doctorId}/slots")
+    fun getDoctorSlots(
+        @PathVariable doctorId: UUID,
+        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) from: LocalDate,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) to: LocalDate?
+    ): List<DaySlotsResponse> {
+        return publicMarketplaceService.getDoctorSlots(doctorId, from, to)
     }
 }

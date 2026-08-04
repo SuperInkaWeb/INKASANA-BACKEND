@@ -14,6 +14,13 @@ interface MarketplaceProfileRepository : JpaRepository<MarketplaceProfile, UUID>
 
     fun findByDoctorId(doctorId: UUID): MarketplaceProfile?
 
+    fun findByOrganizationId(organizationId: UUID): MarketplaceProfile?
+
+    fun findByOrganizationIdAndProfileType(
+        organizationId: UUID,
+        profileType: MarketplaceProfileType
+    ): MarketplaceProfile?
+
     fun findAllByStatus(status: MarketplaceProfileStatus): List<MarketplaceProfile>
 
     fun findAllByIsPublishedTrue(): List<MarketplaceProfile>

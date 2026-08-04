@@ -13,6 +13,13 @@ interface DoctorSpecialtyRepository :
         doctorId: UUID
     ): List<DoctorSpecialty>
 
+    // Trae en una sola consulta las relaciones de TODOS los doctores
+    // pasados, en vez de tener que llamar findAllByDoctorId() una vez
+    // por cada doctor (lo que generaba N+1 queries en findAll()).
+    fun findAllByDoctorIdIn(
+        doctorIds: List<UUID>
+    ): List<DoctorSpecialty>
+
     @Modifying
     @Transactional
     fun deleteAllByDoctorId(

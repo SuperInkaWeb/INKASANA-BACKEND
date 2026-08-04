@@ -9,6 +9,7 @@ import org.springframework.security.authorization.AuthorizationDeniedException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.multipart.MaxUploadSizeExceededException
 
 @RestControllerAdvice
 class GlobalExceptionHandler {
@@ -109,6 +110,22 @@ class GlobalExceptionHandler {
             status = HttpStatus.BAD_REQUEST.value(),
             error = "CONSTRAINT_VIOLATION",
             message = ex.message ?: "Constraint violation",
+            path = request.requestURI
+        )
+
+        return ResponseEntity.badRequest().body(error)
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException::class)
+    fun handleMaxUploadSizeExceeded(
+        ex: MaxUploadSizeExceededException,
+        request: HttpServletRequest
+    ): ResponseEntity<ApiError> {
+
+        val error = ApiError(
+            status = HttpStatus.BAD_REQUEST.value(),
+            error = "FILE_TOO_LARGE",
+            message = "La imagen no puede superar los 5 MB",
             path = request.requestURI
         )
 

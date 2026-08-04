@@ -13,6 +13,12 @@ data class UpdateMarketplaceProfileRequest(
     val email: String?,
     val profileImageUrl: String?,
     val coverImageUrl: String?,
+    val carouselImageUrl1: String?,
+    val carouselImageUrl2: String?,
+    val pageColor: String?,
+    val buttonColor: String?,
+    val subscriptionColor: String?,
+    val appearanceConfig: String?,
     val consultationPrice: BigDecimal?,
     val consultationDurationMinutes: Int?
 )

@@ -13,5 +13,9 @@ data class MarketplaceDoctorSearchResponse(
     val country: String?,
     val profileImageUrl: String?,
     val consultationPrice: BigDecimal?,
-    val consultationDurationMinutes: Int?
+    val consultationDurationMinutes: Int?,
+    val availableDays: List<String>,
+    val availableStartTime: String?,
+    val availableEndTime: String?,
+    val specialties: List<String> = emptyList()
 )

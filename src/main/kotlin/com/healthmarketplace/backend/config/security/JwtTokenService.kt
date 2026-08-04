@@ -50,4 +50,30 @@ class JwtTokenService(
 
         return signedJWT.serialize()
     }
+    fun createPlatformToken(
+        userId: UUID,
+        email: String,
+        role: String = "PATIENT"
+    ): String {
+        val now = Instant.now()
+        val expiresAt = now.plusSeconds(expirationSeconds)
+
+        val claims = JWTClaimsSet.Builder()
+            .subject(userId.toString())
+            .claim("email", email)
+            .claim("role", role)
+            .claim("scope", "PLATFORM")
+            .issueTime(Date.from(now))
+            .expirationTime(Date.from(expiresAt))
+            .build()
+
+        val signedJWT = SignedJWT(
+            JWSHeader(JWSAlgorithm.HS256),
+            claims
+        )
+
+        signedJWT.sign(MACSigner(secret.toByteArray()))
+
+        return signedJWT.serialize()
+    }
 }

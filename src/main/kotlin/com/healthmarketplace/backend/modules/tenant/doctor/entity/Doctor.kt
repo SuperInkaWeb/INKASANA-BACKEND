@@ -45,6 +45,18 @@ class Doctor(
 
     @Column(name = "consultation_duration_minutes")
     var consultationDurationMinutes: Int? = null,
+//para imagen
+    @Column(name = "profile_image_url", length = 500)
+    var profileImageUrl: String? = null,
+//dias disponibles
+    @Column(name = "available_days", length = 200)
+    var availableDays: String? = null,
+//horarios disponibles
+    @Column(name = "available_start_time", length = 5)
+    var availableStartTime: String? = null,
+
+    @Column(name = "available_end_time", length = 5)
+    var availableEndTime: String? = null,
 
     @Enumerated(EnumType.STRING)
     @Column(name = "verification_status", nullable = false, length = 30)

@@ -64,7 +64,9 @@ class SecurityConfig(
                         "/api/platform/organizations/**",
                         "/api/public/auth/**",
                         "/api/public/doctor-registration/**",
-                        "/api/public/marketplace/**"
+                        "/api/public/marketplace/**",
+                        "/api/public/media/**",
+                        "/api/billing/webhook/stripe"
                     ).permitAll()
                     .anyRequest().authenticated()
             }
@@ -80,14 +82,12 @@ class SecurityConfig(
             )
             .build()
     }
-
     @Bean
     fun auth0JwtDecoder(): JwtDecoder {
         return NimbusJwtDecoder
-            .withJwkSetUri("https://dev-06k8nof6buu6b5oz.us.auth0.com/.well-known/jwks.json")
+            .withJwkSetUri("https://dev-i25syim5mvrwjpag.us.auth0.com/.well-known/jwks.json")
             .build()
     }
-
     @Bean
     fun internalJwtDecoder(): JwtDecoder {
         val secretKey = SecretKeySpec(

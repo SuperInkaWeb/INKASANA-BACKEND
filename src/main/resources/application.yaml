@@ -1,9 +1,13 @@
 server:
-  port: 8080
-
+  port: ${PORT:8080}
 spring:
   application:
     name: medical-marketplace-backend
+
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
 
   datasource:
     url: jdbc:postgresql://${DB_SERVER}:${DB_PORT}/${DB_NAME}?sslmode=require&socketTimeout=10&connectTimeout=10&prepareThreshold=0
@@ -22,7 +26,7 @@ spring:
     hibernate:
       ddl-auto: none
     open-in-view: false
-    show-sql: true
+    show-sql: ${SHOW_SQL:false}
     properties:
       hibernate:
         format_sql: true
@@ -45,11 +49,21 @@ management:
       show-details: always
 
 app:
+
+  cors:
+    allowed-origins: ${ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
+
+  mercadopago:
+    access-token: ${MERCADOPAGO_ACCESS_TOKEN}
+    webhook-secret: ${MERCADOPAGO_WEBHOOK_SECRET:}
+    frontend-url: ${FRONTEND_URL:http://localhost:5175}
+    currency: ${MERCADOPAGO_CURRENCY:PEN}
+
   tenant:
     migration-location: classpath:db/migration/tenant
 
   jwt:
-    secret: ${APP_JWT_SECRET:healthmarketplace-super-secret-key-healthmarketplace-2026}
+    secret: ${APP_JWT_SECRET}
     expiration-seconds: ${APP_JWT_EXPIRATION_SECONDS:3600}
 
   auth0:
@@ -62,5 +76,5 @@ app:
 
 logging:
   level:
-    org.springframework.security: DEBUG
-    org.springframework.security.oauth2: DEBUG
+    org.springframework.security: INFO
+    org.springframework.security.oauth2: INFO

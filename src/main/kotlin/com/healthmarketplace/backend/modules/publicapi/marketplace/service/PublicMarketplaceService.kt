@@ -1,10 +1,17 @@
 package com.healthmarketplace.backend.modules.publicapi.marketplace.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import com.healthmarketplace.backend.common.exception.BusinessException
 import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.MarketplaceClinicDetailResponse
 import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.MarketplaceClinicSearchResponse
 import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.MarketplaceDoctorDetailResponse
 import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.MarketplaceDoctorSearchResponse
+import com.healthmarketplace.backend.config.multitenancy.TenantContext
+import com.healthmarketplace.backend.modules.tenant.agenda.dto.DaySlotsResponse
+import com.healthmarketplace.backend.modules.tenant.agenda.service.SlotGeneratorService
+import java.time.LocalDate
+import java.util.UUID
 import com.healthmarketplace.backend.modules.publicapi.marketplace.repository.GlobalMarketplaceProfileRepository
 import com.healthmarketplace.backend.modules.tenant.marketplace.model.MarketplaceProfileStatus
 import com.healthmarketplace.backend.modules.tenant.marketplace.model.MarketplaceProfileType
@@ -13,8 +20,20 @@ import java.math.BigDecimal
 
 @Service
 class PublicMarketplaceService(
-    private val globalMarketplaceProfileRepository: GlobalMarketplaceProfileRepository
+    private val globalMarketplaceProfileRepository: GlobalMarketplaceProfileRepository,
+    private val objectMapper: ObjectMapper,
+    private val slotGeneratorService: SlotGeneratorService
 ) {
+
+    private fun parseSpecialties(specialties: String?): List<String> {
+        if (specialties.isNullOrBlank()) return emptyList()
+
+        return try {
+            objectMapper.readValue<List<String>>(specialties)
+        } catch (ex: Exception) {
+            emptyList()
+        }
+    }
 
     fun searchDoctors(
         search: String?,
@@ -75,7 +94,11 @@ class PublicMarketplaceService(
                     country = profile.country,
                     profileImageUrl = profile.profileImageUrl,
                     consultationPrice = profile.consultationPrice,
-                    consultationDurationMinutes = profile.consultationDurationMinutes
+                    consultationDurationMinutes = profile.consultationDurationMinutes,
+                    availableDays = parseAvailableDays(profile.availableDays),
+                    availableStartTime = profile.availableStartTime,
+                    availableEndTime = profile.availableEndTime,
+                    specialties = parseSpecialties(profile.specialties)
                 )
             }
     }
@@ -86,9 +109,14 @@ class PublicMarketplaceService(
 
         val normalizedSlug = slug.trim().lowercase()
 
+        println("SLUG RECIBIDO = '$slug'")
+        println("SLUG NORMALIZADO = '$normalizedSlug'")
         val profile = globalMarketplaceProfileRepository.findBySlug(normalizedSlug)
-            ?: throw BusinessException("Doctor no encontrado en marketplace")
+        println("PROFILE ENCONTRADO = $profile")
 
+        if (profile == null) {
+            throw BusinessException("Doctor no encontrado en marketplace")
+        }
         if (
             profile.profileType != MarketplaceProfileType.DOCTOR ||
             !profile.isPublished ||
@@ -112,7 +140,11 @@ class PublicMarketplaceService(
             profileImageUrl = profile.profileImageUrl,
             coverImageUrl = profile.coverImageUrl,
             consultationPrice = profile.consultationPrice,
-            consultationDurationMinutes = profile.consultationDurationMinutes
+            consultationDurationMinutes = profile.consultationDurationMinutes,
+            availableDays = parseAvailableDays(profile.availableDays),
+            availableStartTime = profile.availableStartTime,
+            availableEndTime = profile.availableEndTime,
+            specialties = parseSpecialties(profile.specialties)
         )
     }
 
@@ -194,7 +226,82 @@ class PublicMarketplaceService(
             phone = profile.phone,
             email = profile.email,
             profileImageUrl = profile.profileImageUrl,
-            coverImageUrl = profile.coverImageUrl
+            coverImageUrl = profile.coverImageUrl,
+            carouselImageUrl1 = profile.carouselImageUrl1,
+            carouselImageUrl2 = profile.carouselImageUrl2,
+            pageColor = profile.pageColor,
+            buttonColor = profile.buttonColor,
+            subscriptionColor = profile.subscriptionColor
+            ,appearanceConfig = profile.appearanceConfig
         )
     }
+
+    fun getDoctorsByClinicSlug(
+        clinicSlug: String
+    ): List<MarketplaceDoctorSearchResponse> {
+
+        val normalizedSlug = clinicSlug.trim().lowercase()
+
+        val clinicProfile = globalMarketplaceProfileRepository.findBySlug(normalizedSlug)
+            ?: throw BusinessException("Clínica no encontrada en marketplace")
+
+        if (
+            clinicProfile.profileType != MarketplaceProfileType.CLINIC ||
+            !clinicProfile.isPublished ||
+            clinicProfile.status != MarketplaceProfileStatus.PUBLISHED
+        ) {
+            throw BusinessException("Clínica no disponible públicamente")
+        }
+
+        val doctors = globalMarketplaceProfileRepository
+            .findAllByProfileTypeAndIsPublishedTrueAndStatusAndTenantSlug(
+                profileType = MarketplaceProfileType.DOCTOR,
+                status = MarketplaceProfileStatus.PUBLISHED,
+                tenantSlug = clinicProfile.tenantSlug
+            )
+
+        return doctors.map { profile ->
+            MarketplaceDoctorSearchResponse(
+                id = profile.id!!,
+                doctorId = profile.sourceDoctorId,
+                displayName = profile.displayName,
+                slug = profile.slug,
+                headline = profile.headline,
+                city = profile.city,
+                country = profile.country,
+                profileImageUrl = profile.profileImageUrl,
+                consultationPrice = profile.consultationPrice,
+                consultationDurationMinutes = profile.consultationDurationMinutes,
+                availableDays = parseAvailableDays(profile.availableDays),
+                availableStartTime = profile.availableStartTime,
+                availableEndTime = profile.availableEndTime,
+                specialties = parseSpecialties(profile.specialties)
+            )
+        }
+    }
+
+    private fun parseAvailableDays(availableDays: String?): List<String> {
+        return availableDays
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?: emptyList()
+    }
+    fun getDoctorSlots(
+        doctorId: UUID,
+        from: LocalDate,
+        to: LocalDate?
+    ): List<DaySlotsResponse> {
+        val profile = globalMarketplaceProfileRepository.findBySourceDoctorId(doctorId)
+            ?: throw BusinessException("Doctor no encontrado en el marketplace")
+        return try {
+            // Fijar dinámicamente el esquema del tenant para que JPA consulte las tablas correctas
+            TenantContext.setTenant(profile.schemaName)
+            slotGeneratorService.generateSlots(doctorId, from, to ?: from)
+        } finally {
+            TenantContext.clear()
+        }
+    }
+
+
 }
