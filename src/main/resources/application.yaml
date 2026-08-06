@@ -53,11 +53,11 @@ app:
   cors:
     allowed-origins: ${ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
 
-  mercadopago:
-    access-token: ${MERCADOPAGO_ACCESS_TOKEN}
-    webhook-secret: ${MERCADOPAGO_WEBHOOK_SECRET:}
+  stripe:
+    secret-key: ${STRIPE_SECRET_KEY}
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
     frontend-url: ${FRONTEND_URL:http://localhost:5175}
-    currency: ${MERCADOPAGO_CURRENCY:PEN}
+    currency: ${STRIPE_CURRENCY:pen}
 
   tenant:
     migration-location: classpath:db/migration/tenant

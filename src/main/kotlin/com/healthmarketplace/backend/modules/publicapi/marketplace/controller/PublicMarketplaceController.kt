@@ -5,11 +5,17 @@ import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.Marketpla
 import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.MarketplaceDoctorDetailResponse
 import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.MarketplaceDoctorSearchResponse
 import com.healthmarketplace.backend.modules.publicapi.marketplace.service.PublicMarketplaceService
+import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.CreatePublicAppointmentCheckoutRequest
+import com.healthmarketplace.backend.modules.publicapi.marketplace.dto.PublicAppointmentCheckoutResponse
+import com.healthmarketplace.backend.modules.publicapi.marketplace.service.PublicAppointmentCheckoutService
+import jakarta.validation.Valid
 import com.healthmarketplace.backend.modules.tenant.agenda.dto.DaySlotsResponse
 import org.springframework.format.annotation.DateTimeFormat
 import java.time.LocalDate
 import java.util.UUID
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -19,7 +25,8 @@ import java.math.BigDecimal
 @RestController
 @RequestMapping("/api/public/marketplace")
 class PublicMarketplaceController(
-    private val publicMarketplaceService: PublicMarketplaceService
+    private val publicMarketplaceService: PublicMarketplaceService,
+    private val publicAppointmentCheckoutService: PublicAppointmentCheckoutService
 ) {
 
     @GetMapping("/doctors")
@@ -70,6 +77,15 @@ class PublicMarketplaceController(
     fun getDoctorsByClinicSlug(@PathVariable slug: String): List<MarketplaceDoctorSearchResponse> {
         return publicMarketplaceService.getDoctorsByClinicSlug(slug)
     }
+
+    @PostMapping("/doctors/{slug}/appointment-checkout")
+    fun createAppointmentCheckout(
+        @PathVariable slug: String,
+        @Valid @RequestBody request: CreatePublicAppointmentCheckoutRequest
+    ): PublicAppointmentCheckoutResponse {
+        return publicAppointmentCheckoutService.checkout(slug, request)
+    }
+
     @GetMapping("/doctors/{doctorId}/slots")
     fun getDoctorSlots(
         @PathVariable doctorId: UUID,
