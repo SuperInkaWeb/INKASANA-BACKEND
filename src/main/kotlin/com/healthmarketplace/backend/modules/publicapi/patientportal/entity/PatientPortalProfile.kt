@@ -27,6 +27,9 @@ class PatientPortalProfile(
     @Column(length = 20)
     var dni: String? = null,
 
+    @Column(length = 50)
+    var phone: String? = null,
+
     @Column(name = "avatar_url", length = 500)
     var avatarUrl: String? = null,
 

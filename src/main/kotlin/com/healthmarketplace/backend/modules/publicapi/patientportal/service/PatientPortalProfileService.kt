@@ -44,6 +44,10 @@ class PatientPortalProfileService(
             profile.dni = it.trim().ifBlank { null }
         }
 
+        request.phone?.let {
+            profile.phone = it.trim().ifBlank { null }
+        }
+
         profile.updatedAt = LocalDateTime.now()
 
         return response(profiles.save(profile))
@@ -81,6 +85,7 @@ class PatientPortalProfileService(
             firstName = profile.firstName,
             lastName = profile.lastName,
             dni = profile.dni,
+            phone = profile.phone,
             avatarUrl = profile.avatarUrl
         )
 }
