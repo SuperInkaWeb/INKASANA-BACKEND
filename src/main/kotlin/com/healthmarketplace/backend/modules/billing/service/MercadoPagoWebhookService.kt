@@ -1,15 +1,8 @@
 package com.healthmarketplace.backend.modules.billing.service
 
-import com.healthmarketplace.backend.config.multitenancy.TenantContext
 import com.healthmarketplace.backend.modules.billing.config.MercadoPagoProperties
 import com.healthmarketplace.backend.modules.publicapi.patientportal.entity.PatientPortalProfile
 import com.healthmarketplace.backend.modules.publicapi.patientportal.repository.PatientPortalProfileRepository
-import com.healthmarketplace.backend.modules.tenant.appointment.entity.Appointment
-import com.healthmarketplace.backend.modules.tenant.appointment.model.AppointmentStatus
-import com.healthmarketplace.backend.modules.tenant.appointment.repository.AppointmentRepository
-import com.healthmarketplace.backend.modules.tenant.patient.entity.Patient
-import com.healthmarketplace.backend.modules.tenant.patient.model.PatientStatus
-import com.healthmarketplace.backend.modules.tenant.patient.repository.PatientRepository
 import com.mercadopago.exceptions.MPInvalidWebhookSignatureException
 import com.mercadopago.webhook.WebhookSignatureValidator
 import org.springframework.jdbc.core.JdbcTemplate
@@ -27,9 +20,7 @@ class MercadoPagoWebhookService(
     private val jdbcTemplate: JdbcTemplate,
     private val mercadoPagoClient: MercadoPagoClient,
     private val mercadoPagoProperties: MercadoPagoProperties,
-    private val patientProfiles: PatientPortalProfileRepository,
-    private val patients: PatientRepository,
-    private val appointments: AppointmentRepository
+    private val patientProfiles: PatientPortalProfileRepository
 ) {
     @Transactional
     fun process(xSignature: String?, xRequestId: String?, dataId: String?, type: String?) {
@@ -135,19 +126,7 @@ class MercadoPagoWebhookService(
 
         val patientProfile = patientProfiles.findById(checkout.patientProfileId)
             .orElseThrow { IllegalStateException("Perfil de paciente no encontrado") }
-        val appointmentId = try {
-            TenantContext.setTenant(checkout.tenantSchema)
-            val patient = findOrCreateTenantPatient(patientProfile)
-            appointments.save(
-                Appointment(
-                    patientId = requireNotNull(patient.id), doctorId = checkout.doctorId,
-                    tenantId = checkout.tenantSchema, date = checkout.date, time = checkout.time,
-                    status = AppointmentStatus.PAID, price = checkout.amountCents.toBigDecimal().movePointLeft(2)
-                )
-            ).id ?: throw IllegalStateException("No se pudo crear la cita")
-        } finally {
-            TenantContext.clear()
-        }
+        val appointmentId = createPaidTenantAppointment(checkout, patientProfile)
 
         val paidAt = payment.path("date_approved").asText().takeIf { it.isNotBlank() }
             ?.let { runCatching { OffsetDateTime.parse(it).toLocalDateTime() }.getOrNull() }
@@ -190,13 +169,33 @@ class MercadoPagoWebhookService(
         )
     }
 
-    private fun findOrCreateTenantPatient(profile: PatientPortalProfile): Patient {
-        return patients.findByEmailIgnoreCase(profile.email).orElseGet {
+    private fun createPaidTenantAppointment(checkout: AppointmentCheckout, profile: PatientPortalProfile): UUID {
+        require(checkout.tenantSchema.matches(Regex("[a-zA-Z_][a-zA-Z0-9_]*"))) { "Esquema de clínica inválido" }
+        val schema = "\"${checkout.tenantSchema}\""
+        val patientId = jdbcTemplate.query(
+            "SELECT id FROM $schema.patients WHERE LOWER(email) = LOWER(?) LIMIT 1",
+            { rs, _ -> rs.getObject("id", UUID::class.java) }, profile.email
+        ).firstOrNull() ?: run {
             val fullName = listOfNotNull(profile.firstName, profile.lastName)
                 .joinToString(" ") { it.trim() }
                 .ifBlank { profile.email.substringBefore('@') }
-            patients.save(Patient(fullName = fullName, identification = profile.dni, phone = profile.phone, email = profile.email, status = PatientStatus.ACTIVE))
+            jdbcTemplate.queryForObject(
+                """
+                INSERT INTO $schema.patients (id, full_name, identification, phone, email, status, created_at, updated_at)
+                VALUES (gen_random_uuid(), ?, ?, ?, ?, 'ACTIVE', NOW(), NOW()) RETURNING id
+                """.trimIndent(), UUID::class.java, fullName, profile.dni, profile.phone, profile.email
+            ) ?: throw IllegalStateException("No se pudo crear el paciente de la clínica")
         }
+        return jdbcTemplate.queryForObject(
+            """
+            INSERT INTO $schema.appointments
+              (id, patient_id, doctor_id, tenant_id, appointment_date, appointment_time, status, price, created_at, updated_at)
+            VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, 'PAID', ?, NOW(), NOW())
+            RETURNING id
+            """.trimIndent(), UUID::class.java,
+            patientId, checkout.doctorId, checkout.tenantSchema, checkout.date, checkout.time,
+            checkout.amountCents.toBigDecimal().movePointLeft(2)
+        ) ?: throw IllegalStateException("No se pudo crear la cita")
     }
 
     private fun saveBillingRecords(checkout: AppointmentCheckout, paymentId: String, paidAt: LocalDateTime) {
