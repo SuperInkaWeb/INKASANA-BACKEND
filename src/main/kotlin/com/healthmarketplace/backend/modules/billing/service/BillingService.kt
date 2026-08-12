@@ -9,6 +9,9 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
+import java.math.RoundingMode
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.util.UUID
 
 @Service
@@ -18,23 +21,27 @@ class BillingService(
     private val mercadoPagoClient: MercadoPagoClient,
     private val mercadoPagoProperties: MercadoPagoProperties
 ) {
-    fun paymentHistory(organizationId: UUID): List<PaymentHistoryItemResponse> = jdbcTemplate.query(
-        """
-        SELECT p.id, p.purpose, i.invoice_number, p.amount_cents, p.currency, p.status, p.paid_at
-        FROM payments p
-        LEFT JOIN invoices i ON i.organization_id = p.organization_id
-          AND i.stripe_invoice_id = CONCAT('mercadopago-payment-', p.mercadopago_payment_id)
-        WHERE p.organization_id = ?
-        ORDER BY COALESCE(p.paid_at, p.created_at) DESC
-        """.trimIndent(),
-        { rs, _ -> PaymentHistoryItemResponse(
-            rs.getObject("id", UUID::class.java).toString(), rs.getString("purpose"), rs.getString("invoice_number"),
-            rs.getLong("amount_cents"), rs.getString("currency"), rs.getString("status"),
-            rs.getTimestamp("paid_at")?.toLocalDateTime()
-        ) }, organizationId
-    )
+    fun paymentHistory(organizationId: UUID): List<PaymentHistoryItemResponse> {
+        synchronizeFromMercadoPago(organizationId)
+        return jdbcTemplate.query(
+            """
+            SELECT p.id, p.purpose, i.invoice_number, p.amount_cents, p.currency, p.status, p.paid_at
+            FROM payments p
+            LEFT JOIN invoices i ON i.organization_id = p.organization_id
+              AND i.stripe_invoice_id = CONCAT('mercadopago-payment-', p.mercadopago_payment_id)
+            WHERE p.organization_id = ?
+            ORDER BY COALESCE(p.paid_at, p.created_at) DESC
+            """.trimIndent(),
+            { rs, _ -> PaymentHistoryItemResponse(
+                rs.getObject("id", UUID::class.java).toString(), rs.getString("purpose"), rs.getString("invoice_number"),
+                rs.getLong("amount_cents"), rs.getString("currency"), rs.getString("status"),
+                rs.getTimestamp("paid_at")?.toLocalDateTime()
+            ) }, organizationId
+        )
+    }
 
     fun summary(organizationId: UUID): BillingSummaryResponse {
+        synchronizeFromMercadoPago(organizationId)
         val rows = jdbcTemplate.query(
             """
             SELECT s.status, p.name, s.current_period_end, s.cancel_at_period_end
@@ -45,6 +52,72 @@ class BillingService(
             organizationId
         )
         return rows.firstOrNull() ?: BillingSummaryResponse("NONE", null, null, false)
+    }
+
+    /**
+     * Los webhooks son la vía normal, pero esta conciliación evita que una
+     * notificación perdida deje el pago o la suscripción desactualizados.
+     */
+    private fun synchronizeFromMercadoPago(organizationId: UUID) {
+        val preapprovalId = jdbcTemplate.query(
+            "SELECT mercadopago_preapproval_id FROM subscriptions WHERE organization_id = ? AND mercadopago_preapproval_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+            { rs, _ -> rs.getString("mercadopago_preapproval_id") }, organizationId
+        ).firstOrNull() ?: return
+
+        runCatching {
+            val subscription = mercadoPagoClient.get("/preapproval/$preapprovalId")
+            val status = when (subscription.path("status").asText().lowercase()) {
+                "authorized" -> "ACTIVE"
+                "cancelled" -> "CANCELED"
+                "paused" -> "PAST_DUE"
+                else -> "INCOMPLETE"
+            }
+            val nextPaymentDate = subscription.path("next_payment_date").asText().takeIf { it.isNotBlank() }
+                ?.let { OffsetDateTime.parse(it).toLocalDateTime() }
+            jdbcTemplate.update(
+                "UPDATE subscriptions SET status = ?, current_period_end = ?, cancel_at_period_end = ?, updated_at = NOW() WHERE organization_id = ? AND mercadopago_preapproval_id = ?",
+                status, nextPaymentDate, status == "CANCELED", organizationId, preapprovalId
+            )
+
+            val payments = mercadoPagoClient.get("/v1/payments/search?preapproval_id=$preapprovalId&status=approved&sort=date_created&criteria=desc&limit=20")
+            payments.path("results").filter { it.path("status").asText().lowercase() == "approved" }.forEach { payment ->
+                val paymentId = payment.path("id").asText().takeIf { it.isNotBlank() } ?: return@forEach
+                val amountCents = payment.path("transaction_amount").decimalValue()
+                    .movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact()
+                val currency = payment.path("currency_id").asText().ifBlank { mercadoPagoProperties.currency.uppercase() }
+                val paidAt = payment.path("date_approved").asText().takeIf { it.isNotBlank() }
+                    ?.let { OffsetDateTime.parse(it).toLocalDateTime() } ?: LocalDateTime.now()
+                saveSubscriptionPayment(organizationId, paymentId, amountCents, currency, paidAt)
+            }
+        }.onFailure { exception ->
+            // La vista conserva el último estado conocido si Mercado Pago no está disponible.
+            println("No se pudo conciliar la suscripción de $organizationId: ${exception.message}")
+        }
+    }
+
+    private fun saveSubscriptionPayment(
+        organizationId: UUID,
+        paymentId: String,
+        amountCents: Long,
+        currency: String,
+        paidAt: LocalDateTime
+    ) {
+        jdbcTemplate.update(
+            """
+            INSERT INTO payments (organization_id, mercadopago_payment_id, amount_cents, currency, status, paid_at, purpose)
+            VALUES (?, ?, ?, ?, 'PAID', ?, 'SUBSCRIPTION')
+            ON CONFLICT (mercadopago_payment_id) DO UPDATE
+            SET status = 'PAID', paid_at = EXCLUDED.paid_at, updated_at = NOW()
+            """.trimIndent(), organizationId, paymentId, amountCents, currency, paidAt
+        )
+        jdbcTemplate.update(
+            """
+            INSERT INTO invoices (organization_id, stripe_invoice_id, invoice_number, amount_due_cents, amount_paid_cents, currency, status, paid_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'PAID', ?)
+            ON CONFLICT (stripe_invoice_id) DO UPDATE
+            SET amount_paid_cents = EXCLUDED.amount_paid_cents, status = 'PAID', paid_at = EXCLUDED.paid_at, updated_at = NOW()
+            """.trimIndent(), organizationId, "mercadopago-payment-$paymentId", "MP-$paymentId", amountCents, amountCents, currency, paidAt
+        )
     }
 
     @Transactional
