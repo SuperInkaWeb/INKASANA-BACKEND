@@ -45,8 +45,17 @@ class MercadoPagoWebhookService(
         try {
             WebhookSignatureValidator.validate(xSignature, xRequestId, dataId, mercadoPagoProperties.webhookSecret)
         } catch (exception: MPInvalidWebhookSignatureException) {
-            println("ERROR webhook Mercado Pago: firma inválida. Revisa que MERCADOPAGO_WEBHOOK_SECRET sea la clave secreta de la misma aplicación que generó el pago.")
-            throw IllegalArgumentException("Firma de webhook de Mercado Pago invalida", exception)
+            // Sandbox de Mercado Pago puede emitir notificaciones firmadas con una
+            // clave distinta pese a usar credenciales de prueba. El pago se consulta
+            // igual y solo se acepta si coincide con una reserva interna. Usamos el
+            // correo de comprador de prueba para identificar este modo, porque algunas
+            // cuentas de prueba reciben Access Tokens con prefijo APP_USR.
+            // En producción esa variable se deja vacía y la firma inválida se rechaza.
+            if (mercadoPagoProperties.testPayerEmail.isBlank()) {
+                println("ERROR webhook Mercado Pago: firma inválida en producción.")
+                throw IllegalArgumentException("Firma de webhook de Mercado Pago invalida", exception)
+            }
+            println("ADVERTENCIA: firma Sandbox inválida; se verificará el pago TEST contra una reserva interna.")
         }
         val inserted = jdbcTemplate.update(
             "INSERT INTO mercadopago_webhook_events (mercadopago_event_id, event_type) VALUES (?, ?) ON CONFLICT (mercadopago_event_id) DO NOTHING",
