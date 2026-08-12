@@ -47,10 +47,16 @@ class MercadoPagoWebhookService(
         )
         if (inserted == 0) return
 
-        when (type) {
-            "subscription_preapproval" -> synchronizeSubscription(dataId)
-            "payment" -> synchronizeAppointmentPayment(dataId)
-            else -> println("Mercado Pago webhook ignorado: tipo no manejado '$type'")
+        try {
+            when (type) {
+                "subscription_preapproval" -> synchronizeSubscription(dataId)
+                "payment" -> synchronizeAppointmentPayment(dataId)
+                else -> println("Mercado Pago webhook ignorado: tipo no manejado '$type'")
+            }
+        } catch (exception: Exception) {
+            println("ERROR procesando webhook de Mercado Pago: ${exception.message}")
+            exception.printStackTrace()
+            throw exception
         }
     }
 
@@ -83,15 +89,21 @@ class MercadoPagoWebhookService(
     private fun synchronizeAppointmentPayment(mercadoPagoPaymentId: String) {
         val payment = mercadoPagoClient.get("/v1/payments/$mercadoPagoPaymentId")
         val reference = payment.path("external_reference").asText()
+        val status = payment.path("status").asText().lowercase()
+        println("Pago consultado: id=$mercadoPagoPaymentId, status=$status, externalReference=$reference")
         val checkoutId = reference.removePrefix("appointment:").takeIf { reference.startsWith("appointment:") }
             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
         if (checkoutId == null) {
+            println("El pago $mercadoPagoPaymentId no corresponde a una reserva de cita")
             synchronizeSubscriptionPayment(reference, payment, mercadoPagoPaymentId)
             return
         }
-        val checkout = findAppointmentCheckout(checkoutId) ?: return
+        val checkout = findAppointmentCheckout(checkoutId)
+        if (checkout == null) {
+            println("No se encontró la reserva de cita $checkoutId para el pago $mercadoPagoPaymentId")
+            return
+        }
 
-        val status = payment.path("status").asText().lowercase()
         if (status != "approved") {
             println("Pago de cita $mercadoPagoPaymentId todavía no aprobado: $status")
             jdbcTemplate.update(
@@ -100,7 +112,10 @@ class MercadoPagoWebhookService(
             )
             return
         }
-        if (checkout.appointmentId != null) return
+        if (checkout.appointmentId != null) {
+            println("La reserva $checkoutId ya tiene la cita ${checkout.appointmentId}")
+            return
+        }
 
         val patientProfile = patientProfiles.findById(checkout.patientProfileId)
             .orElseThrow { IllegalStateException("Perfil de paciente no encontrado") }
