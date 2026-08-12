@@ -34,11 +34,18 @@ class MercadoPagoWebhookService(
     @Transactional
     fun process(xSignature: String?, xRequestId: String?, dataId: String?, type: String?) {
         println("Mercado Pago webhook recibido: type=$type, paymentOrPreapprovalId=$dataId, requestId=$xRequestId")
-        require(mercadoPagoProperties.webhookSecret.isNotBlank()) { "MERCADOPAGO_WEBHOOK_SECRET es obligatoria para recibir webhooks" }
-        require(!xSignature.isNullOrBlank() && !xRequestId.isNullOrBlank() && !dataId.isNullOrBlank()) { "Webhook de Mercado Pago incompleto" }
+        if (mercadoPagoProperties.webhookSecret.isBlank()) {
+            println("ERROR webhook Mercado Pago: MERCADOPAGO_WEBHOOK_SECRET está vacía en Render")
+            throw IllegalStateException("MERCADOPAGO_WEBHOOK_SECRET es obligatoria para recibir webhooks")
+        }
+        if (xSignature.isNullOrBlank() || xRequestId.isNullOrBlank() || dataId.isNullOrBlank()) {
+            println("Webhook Mercado Pago ignorado: notificación sin firma o sin data.id")
+            return
+        }
         try {
             WebhookSignatureValidator.validate(xSignature, xRequestId, dataId, mercadoPagoProperties.webhookSecret)
         } catch (exception: MPInvalidWebhookSignatureException) {
+            println("ERROR webhook Mercado Pago: firma inválida. Revisa que MERCADOPAGO_WEBHOOK_SECRET sea la clave secreta de la misma aplicación que generó el pago.")
             throw IllegalArgumentException("Firma de webhook de Mercado Pago invalida", exception)
         }
         val inserted = jdbcTemplate.update(
