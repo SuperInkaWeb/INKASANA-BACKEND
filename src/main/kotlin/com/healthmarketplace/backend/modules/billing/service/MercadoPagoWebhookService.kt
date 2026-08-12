@@ -86,10 +86,11 @@ class MercadoPagoWebhookService(
             SET status = ?, mercadopago_preapproval_id = ?, mercadopago_payer_id = NULLIF(?, ''),
                 mercadopago_payer_email = NULLIF(?, ''), current_period_end = ?,
                 cancel_at_period_end = ?, updated_at = NOW()
-            WHERE organization_id = ?
+            WHERE organization_id = ? AND mercadopago_preapproval_id = ?
             """.trimIndent(),
             status, preapprovalId, subscription.path("payer_id").asText(),
-            subscription.path("payer_email").asText(), nextPaymentDate, status == "CANCELED", organizationId
+            subscription.path("payer_email").asText(), nextPaymentDate, status == "CANCELED",
+            organizationId, preapprovalId
         )
     }
 
@@ -145,6 +146,20 @@ class MercadoPagoWebhookService(
     private fun synchronizeSubscriptionPayment(reference: String, payment: com.fasterxml.jackson.databind.JsonNode, paymentId: String) {
         val organizationId = runCatching { UUID.fromString(reference) }.getOrNull() ?: return
         if (payment.path("status").asText().lowercase() != "approved") return
+        val preapprovalId = payment.path("preapproval_id").asText().takeIf { it.isNotBlank() }
+        if (preapprovalId != null) {
+            // El webhook de pago puede llegar antes que el de preapproval. Al consultar
+            // la preapproval aquí, el plan queda activo aunque esa segunda notificación
+            // llegue tarde o no se entregue.
+            synchronizeSubscription(preapprovalId)
+        } else {
+            // Respaldo para respuestas antiguas de Mercado Pago que no incluyen el ID
+            // de preapproval: solo se activa una suscripción que sigue pendiente.
+            jdbcTemplate.update(
+                "UPDATE subscriptions SET status = 'ACTIVE', cancel_at_period_end = FALSE, updated_at = NOW() WHERE id = (SELECT id FROM subscriptions WHERE organization_id = ? AND status IN ('INCOMPLETE', 'PAST_DUE') ORDER BY updated_at DESC LIMIT 1)",
+                organizationId
+            )
+        }
         val amountCents = payment.path("transaction_amount").decimalValue()
             .movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact()
         val currency = payment.path("currency_id").asText().ifBlank { mercadoPagoProperties.currency.uppercase() }
