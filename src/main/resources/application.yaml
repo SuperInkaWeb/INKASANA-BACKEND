@@ -58,6 +58,7 @@ app:
     access-token: ${MERCADOPAGO_ACCESS_TOKEN}
     webhook-secret: ${MERCADOPAGO_WEBHOOK_SECRET:}
     webhook-url: ${MERCADOPAGO_WEBHOOK_URL:}
+    test-payer-email: ${MERCADOPAGO_TEST_PAYER_EMAIL:}
     frontend-url: ${FRONTEND_URL:http://localhost:5175}
     currency: ${MERCADOPAGO_CURRENCY:PEN}
 
