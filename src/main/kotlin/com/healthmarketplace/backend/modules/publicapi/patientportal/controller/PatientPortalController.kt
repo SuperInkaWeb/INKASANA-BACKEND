@@ -2,6 +2,7 @@ package com.healthmarketplace.backend.modules.publicapi.patientportal.controller
 
 import com.healthmarketplace.backend.modules.publicapi.patientportal.dto.PatientPortalProfileResponse
 import com.healthmarketplace.backend.modules.publicapi.patientportal.dto.UpdatePatientPortalProfileRequest
+import com.healthmarketplace.backend.modules.publicapi.patientportal.dto.PatientPortalAppointmentResponse
 import com.healthmarketplace.backend.modules.publicapi.patientportal.service.PatientPortalProfileService
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -37,5 +38,10 @@ class PatientPortalController(
         @RequestParam("file") file: MultipartFile
     ): PatientPortalProfileResponse {
         return patientPortalProfileService.updateAvatar(jwt, file)
+    }
+
+    @GetMapping("/appointments")
+    fun getAppointments(@AuthenticationPrincipal jwt: Jwt): List<PatientPortalAppointmentResponse> {
+        return patientPortalProfileService.appointments(jwt)
     }
 }
