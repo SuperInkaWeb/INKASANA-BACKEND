@@ -21,3 +21,13 @@ data class BillingSummaryResponse(
     val currentPeriodEnd: LocalDateTime?,
     val cancelAtPeriodEnd: Boolean
 )
+
+data class PaymentHistoryItemResponse(
+    val id: String,
+    val purpose: String,
+    val invoiceNumber: String?,
+    val amountCents: Long,
+    val currency: String,
+    val status: String,
+    val paidAt: LocalDateTime?
+)

@@ -3,6 +3,7 @@ package com.healthmarketplace.backend.modules.billing.service
 import com.healthmarketplace.backend.modules.billing.config.MercadoPagoProperties
 import com.healthmarketplace.backend.modules.billing.dto.BillingSummaryResponse
 import com.healthmarketplace.backend.modules.billing.dto.RedirectUrlResponse
+import com.healthmarketplace.backend.modules.billing.dto.PaymentHistoryItemResponse
 import com.healthmarketplace.backend.modules.core.organization.repository.OrganizationRepository
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
@@ -17,6 +18,22 @@ class BillingService(
     private val mercadoPagoClient: MercadoPagoClient,
     private val mercadoPagoProperties: MercadoPagoProperties
 ) {
+    fun paymentHistory(organizationId: UUID): List<PaymentHistoryItemResponse> = jdbcTemplate.query(
+        """
+        SELECT p.id, p.purpose, i.invoice_number, p.amount_cents, p.currency, p.status, p.paid_at
+        FROM payments p
+        LEFT JOIN invoices i ON i.organization_id = p.organization_id
+          AND i.stripe_invoice_id = CONCAT('mercadopago-payment-', p.mercadopago_payment_id)
+        WHERE p.organization_id = ?
+        ORDER BY COALESCE(p.paid_at, p.created_at) DESC
+        """.trimIndent(),
+        { rs, _ -> PaymentHistoryItemResponse(
+            rs.getObject("id", UUID::class.java).toString(), rs.getString("purpose"), rs.getString("invoice_number"),
+            rs.getLong("amount_cents"), rs.getString("currency"), rs.getString("status"),
+            rs.getTimestamp("paid_at")?.toLocalDateTime()
+        ) }, organizationId
+    )
+
     fun summary(organizationId: UUID): BillingSummaryResponse {
         val rows = jdbcTemplate.query(
             """
@@ -46,6 +63,10 @@ class BillingService(
             ?: organization.email?.takeIf { it.isNotBlank() }
             ?: throw IllegalStateException("La organizacion necesita un correo para suscribirse")
 
+        // Si el usuario abandonó un checkout anterior, se cancela antes de
+        // crear el nuevo para no dejar preaprovals pendientes en Mercado Pago.
+        cancelPendingSubscription(organizationId)
+
         val response = mercadoPagoClient.post(
             "/preapproval",
             mapOf(
@@ -74,13 +95,30 @@ class BillingService(
         val subscriptionId = jdbcTemplate.query(
             "SELECT mercadopago_preapproval_id FROM subscriptions WHERE organization_id = ? AND mercadopago_preapproval_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
             { rs, _ -> rs.getString("mercadopago_preapproval_id") }, organizationId
-        ).firstOrNull() ?: throw IllegalStateException("La organizacion no tiene una suscripcion activa")
+        ).firstOrNull() ?: throw IllegalStateException("La organizacion no tiene una suscripcion pendiente o activa")
         mercadoPagoClient.put("/preapproval/$subscriptionId", mapOf("status" to "cancelled"))
         jdbcTemplate.update(
             "UPDATE subscriptions SET status = 'CANCELED', cancel_at_period_end = TRUE, updated_at = NOW() WHERE mercadopago_preapproval_id = ?",
             subscriptionId
         )
         return summary(organizationId)
+    }
+
+    private fun cancelPendingSubscription(organizationId: UUID) {
+        val pendingId = jdbcTemplate.query(
+            """
+            SELECT mercadopago_preapproval_id FROM subscriptions
+            WHERE organization_id = ? AND status IN ('INCOMPLETE', 'PAST_DUE')
+              AND mercadopago_preapproval_id IS NOT NULL
+            ORDER BY updated_at DESC LIMIT 1
+            """.trimIndent(),
+            { rs, _ -> rs.getString("mercadopago_preapproval_id") }, organizationId
+        ).firstOrNull() ?: return
+        mercadoPagoClient.put("/preapproval/$pendingId", mapOf("status" to "cancelled"))
+        jdbcTemplate.update(
+            "UPDATE subscriptions SET status = 'CANCELED', cancel_at_period_end = TRUE, updated_at = NOW() WHERE mercadopago_preapproval_id = ?",
+            pendingId
+        )
     }
 
     private fun saveIncompleteSubscription(organizationId: UUID, planId: UUID, preapprovalId: String, payerEmail: String) {

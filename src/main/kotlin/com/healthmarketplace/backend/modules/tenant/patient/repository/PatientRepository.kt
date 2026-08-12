@@ -3,9 +3,12 @@ package com.healthmarketplace.backend.modules.tenant.patient.repository
 import com.healthmarketplace.backend.modules.tenant.patient.entity.Patient
 import com.healthmarketplace.backend.modules.tenant.patient.model.PatientStatus
 import org.springframework.data.jpa.repository.JpaRepository
+import java.util.Optional
 import java.util.UUID
 
 interface PatientRepository : JpaRepository<Patient, UUID> {
+
+    fun findByEmailIgnoreCase(email: String): Optional<Patient>
 
     fun existsByIdentification(
         identification: String

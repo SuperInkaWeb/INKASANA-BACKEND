@@ -3,6 +3,7 @@ package com.healthmarketplace.backend.modules.billing.controller
 import com.healthmarketplace.backend.modules.billing.dto.BillingSummaryResponse
 import com.healthmarketplace.backend.modules.billing.dto.CreateCheckoutSessionRequest
 import com.healthmarketplace.backend.modules.billing.dto.RedirectUrlResponse
+import com.healthmarketplace.backend.modules.billing.dto.PaymentHistoryItemResponse
 import com.healthmarketplace.backend.modules.billing.service.BillingService
 import jakarta.validation.Valid
 import org.springframework.security.access.prepost.PreAuthorize
@@ -24,6 +25,11 @@ class BillingController(
     @GetMapping("/subscription")
     fun getSubscription(@AuthenticationPrincipal jwt: Jwt): BillingSummaryResponse {
         return billingService.summary(UUID.fromString(jwt.getClaimAsString("orgId")))
+    }
+
+    @GetMapping("/payments")
+    fun getPayments(@AuthenticationPrincipal jwt: Jwt): List<PaymentHistoryItemResponse> {
+        return billingService.paymentHistory(UUID.fromString(jwt.getClaimAsString("orgId")))
     }
 
     @PostMapping("/checkout-session")

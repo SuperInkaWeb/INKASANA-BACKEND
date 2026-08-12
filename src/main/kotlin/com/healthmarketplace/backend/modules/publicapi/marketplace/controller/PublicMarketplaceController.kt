@@ -21,6 +21,9 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.math.BigDecimal
+import org.springframework.security.access.prepost.PreAuthorize
+import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.security.oauth2.jwt.Jwt
 
 @RestController
 @RequestMapping("/api/public/marketplace")
@@ -79,11 +82,13 @@ class PublicMarketplaceController(
     }
 
     @PostMapping("/doctors/{slug}/appointment-checkout")
+    @PreAuthorize("hasRole('PATIENT')")
     fun createAppointmentCheckout(
         @PathVariable slug: String,
-        @Valid @RequestBody request: CreatePublicAppointmentCheckoutRequest
+        @Valid @RequestBody request: CreatePublicAppointmentCheckoutRequest,
+        @AuthenticationPrincipal jwt: Jwt
     ): PublicAppointmentCheckoutResponse {
-        return publicAppointmentCheckoutService.checkout(slug, request)
+        return publicAppointmentCheckoutService.checkout(slug, request, UUID.fromString(jwt.subject))
     }
 
     @GetMapping("/doctors/{doctorId}/slots")
