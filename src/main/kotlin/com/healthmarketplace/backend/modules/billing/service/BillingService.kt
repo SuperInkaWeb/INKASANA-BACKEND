@@ -1,25 +1,21 @@
 package com.healthmarketplace.backend.modules.billing.service
 
-import com.healthmarketplace.backend.modules.billing.config.StripeProperties
+import com.healthmarketplace.backend.modules.billing.config.MercadoPagoProperties
 import com.healthmarketplace.backend.modules.billing.dto.BillingSummaryResponse
 import com.healthmarketplace.backend.modules.billing.dto.RedirectUrlResponse
 import com.healthmarketplace.backend.modules.core.organization.repository.OrganizationRepository
-import com.stripe.model.Customer
-import com.stripe.model.Subscription
-import com.stripe.model.checkout.Session
-import com.stripe.param.CustomerCreateParams
-import com.stripe.param.SubscriptionUpdateParams
-import com.stripe.param.checkout.SessionCreateParams
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 import java.util.UUID
 
 @Service
 class BillingService(
     private val jdbcTemplate: JdbcTemplate,
     private val organizationRepository: OrganizationRepository,
-    private val stripeProperties: StripeProperties
+    private val mercadoPagoClient: MercadoPagoClient,
+    private val mercadoPagoProperties: MercadoPagoProperties
 ) {
     fun summary(organizationId: UUID): BillingSummaryResponse {
         val rows = jdbcTemplate.query(
@@ -40,61 +36,66 @@ class BillingService(
             "SELECT id, name, price_cents FROM plans WHERE code = ? AND is_active = TRUE",
             { rs, _ -> Plan(UUID.fromString(rs.getString("id")), rs.getString("name"), rs.getLong("price_cents")) },
             planCode
-        ).firstOrNull() ?: throw IllegalArgumentException("El plan no existe o no está disponible")
+        ).firstOrNull() ?: throw IllegalArgumentException("El plan no existe o no esta disponible")
         require(plan.priceCents > 0) { "El plan Esencial es gratuito y no requiere pago." }
+        require(mercadoPagoProperties.webhookUrl.isNotBlank()) { "MERCADOPAGO_WEBHOOK_URL es obligatoria para iniciar el checkout" }
 
         val organization = organizationRepository.findById(organizationId)
-            .orElseThrow { IllegalArgumentException("Organización no encontrada") }
-        val customerId = findOrCreateCustomer(organizationId, organization.email, organization.name)
-        saveIncompleteSubscription(organizationId, plan.id, customerId)
+            .orElseThrow { IllegalArgumentException("Organizacion no encontrada") }
+        val payerEmail = mercadoPagoProperties.testPayerEmail.takeIf { it.isNotBlank() }
+            ?: organization.email?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("La organizacion necesita un correo para suscribirse")
 
-        val params = SessionCreateParams.builder()
-            .setMode(SessionCreateParams.Mode.SUBSCRIPTION)
-            .setCustomer(customerId)
-            .setClientReferenceId(organizationId.toString())
-            .setSuccessUrl("${stripeProperties.frontendUrl}/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}")
-            .setCancelUrl("${stripeProperties.frontendUrl}/billing?checkout=cancelled")
-            .putMetadata("organizationId", organizationId.toString())
-            .putMetadata("planCode", planCode)
-            .addLineItem(
-                SessionCreateParams.LineItem.builder().setQuantity(1L)
-                    .setPriceData(
-                        SessionCreateParams.LineItem.PriceData.builder()
-                            .setCurrency(stripeProperties.currency)
-                            .setUnitAmount(plan.priceCents)
-                            .setRecurring(SessionCreateParams.LineItem.PriceData.Recurring.builder().setInterval(SessionCreateParams.LineItem.PriceData.Recurring.Interval.MONTH).build())
-                            .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder().setName(plan.name).build())
-                            .build()
-                    ).build()
-            ).build()
-        return RedirectUrlResponse(Session.create(params).url)
+        val response = mercadoPagoClient.post(
+            "/preapproval",
+            mapOf(
+                "reason" to "Plan ${plan.name}",
+                "external_reference" to organizationId.toString(),
+                "payer_email" to payerEmail,
+                "auto_recurring" to mapOf(
+                    "frequency" to 1,
+                    "frequency_type" to "months",
+                    "transaction_amount" to BigDecimal.valueOf(plan.priceCents, 2),
+                    "currency_id" to mercadoPagoProperties.currency.uppercase()
+                ),
+                "back_url" to "${mercadoPagoProperties.frontendUrl}/billing?checkout=success",
+                "notification_url" to mercadoPagoProperties.webhookUrl
+            )
+        )
+        val preapprovalId = response.path("id").asText()
+        val checkoutUrl = response.path("sandbox_init_point").asText().ifBlank { response.path("init_point").asText() }
+        require(preapprovalId.isNotBlank() && checkoutUrl.isNotBlank()) { "Mercado Pago no devolvio el enlace de checkout" }
+        saveIncompleteSubscription(organizationId, plan.id, preapprovalId, payerEmail)
+        return RedirectUrlResponse(checkoutUrl)
     }
 
     @Transactional
     fun cancel(organizationId: UUID): BillingSummaryResponse {
         val subscriptionId = jdbcTemplate.query(
-            "SELECT stripe_subscription_id FROM subscriptions WHERE organization_id = ? AND stripe_subscription_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
-            { rs, _ -> rs.getString("stripe_subscription_id") }, organizationId
-        ).firstOrNull() ?: throw IllegalStateException("La organización no tiene una suscripción activa")
-        Subscription.retrieve(subscriptionId).update(SubscriptionUpdateParams.builder().setCancelAtPeriodEnd(true).build())
-        jdbcTemplate.update("UPDATE subscriptions SET cancel_at_period_end = TRUE, updated_at = NOW() WHERE stripe_subscription_id = ?", subscriptionId)
+            "SELECT mercadopago_preapproval_id FROM subscriptions WHERE organization_id = ? AND mercadopago_preapproval_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+            { rs, _ -> rs.getString("mercadopago_preapproval_id") }, organizationId
+        ).firstOrNull() ?: throw IllegalStateException("La organizacion no tiene una suscripcion activa")
+        mercadoPagoClient.put("/preapproval/$subscriptionId", mapOf("status" to "cancelled"))
+        jdbcTemplate.update(
+            "UPDATE subscriptions SET status = 'CANCELED', cancel_at_period_end = TRUE, updated_at = NOW() WHERE mercadopago_preapproval_id = ?",
+            subscriptionId
+        )
         return summary(organizationId)
     }
 
-    private fun findOrCreateCustomer(organizationId: UUID, email: String?, name: String): String {
-        val existing = jdbcTemplate.query(
-            "SELECT stripe_customer_id FROM subscriptions WHERE organization_id = ? AND stripe_customer_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
-            { rs, _ -> rs.getString("stripe_customer_id") }, organizationId
-        ).firstOrNull()
-        if (existing != null) return existing
-        val params = CustomerCreateParams.builder().setName(name).putMetadata("organizationId", organizationId.toString()).apply { if (!email.isNullOrBlank()) setEmail(email) }.build()
-        return Customer.create(params).id
-    }
-
-    private fun saveIncompleteSubscription(organizationId: UUID, planId: UUID, customerId: String) {
+    private fun saveIncompleteSubscription(organizationId: UUID, planId: UUID, preapprovalId: String, payerEmail: String) {
         val exists = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM subscriptions WHERE organization_id = ?", Int::class.java, organizationId) ?: 0
-        if (exists == 0) jdbcTemplate.update("INSERT INTO subscriptions (organization_id, plan_id, status, stripe_customer_id) VALUES (?, ?, 'INCOMPLETE', ?)", organizationId, planId, customerId)
-        else jdbcTemplate.update("UPDATE subscriptions SET plan_id = ?, stripe_customer_id = ?, stripe_subscription_id = NULL, status = 'INCOMPLETE', cancel_at_period_end = FALSE, updated_at = NOW() WHERE id = (SELECT id FROM subscriptions WHERE organization_id = ? ORDER BY updated_at DESC LIMIT 1)", planId, customerId, organizationId)
+        if (exists == 0) {
+            jdbcTemplate.update(
+                "INSERT INTO subscriptions (organization_id, plan_id, status, mercadopago_preapproval_id, mercadopago_payer_email) VALUES (?, ?, 'INCOMPLETE', ?, ?)",
+                organizationId, planId, preapprovalId, payerEmail
+            )
+        } else {
+            jdbcTemplate.update(
+                "UPDATE subscriptions SET plan_id = ?, mercadopago_preapproval_id = ?, mercadopago_payer_email = ?, status = 'INCOMPLETE', cancel_at_period_end = FALSE, updated_at = NOW() WHERE id = (SELECT id FROM subscriptions WHERE organization_id = ? ORDER BY updated_at DESC LIMIT 1)",
+                planId, preapprovalId, payerEmail, organizationId
+            )
+        }
     }
 
     private data class Plan(val id: UUID, val name: String, val priceCents: Long)

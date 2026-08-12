@@ -66,7 +66,7 @@ class SecurityConfig(
                         "/api/public/doctor-registration/**",
                         "/api/public/marketplace/**",
                         "/api/public/media/**",
-                        "/api/billing/webhook/stripe"
+                        "/api/billing/webhook/mercadopago"
                     ).permitAll()
                     .anyRequest().authenticated()
             }
