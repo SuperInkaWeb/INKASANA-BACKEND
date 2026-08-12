@@ -8,6 +8,7 @@ import java.time.LocalTime
 import java.util.UUID
 
 interface AppointmentRepository : JpaRepository<Appointment, UUID> {
+    fun countByStatus(status: AppointmentStatus): Long
     fun findAllByPatientIdOrderByDateDescTimeDesc(patientId: UUID): List<Appointment>
     fun findAllByDoctorIdOrderByDateAscTimeAsc(doctorId: UUID): List<Appointment>
     fun findAllByDateOrderByTimeAsc(date: LocalDate): List<Appointment>

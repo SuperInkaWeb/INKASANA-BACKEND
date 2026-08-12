@@ -21,6 +21,11 @@ class AppointmentService(
     private val patients: PatientRepository,
     private val doctors: DoctorRepository
 ) {
+    @Transactional(readOnly = true)
+    fun summary(): AppointmentSummaryResponse = AppointmentSummaryResponse(
+        confirmedAppointments = appointments.countByStatus(AppointmentStatus.CONFIRMED)
+    )
+
     @Transactional
     fun create(request: CreateAppointmentRequest): AppointmentResponse {
         val patient = patients.findById(request.patientId).orElseThrow { BusinessException("Paciente no encontrado") }

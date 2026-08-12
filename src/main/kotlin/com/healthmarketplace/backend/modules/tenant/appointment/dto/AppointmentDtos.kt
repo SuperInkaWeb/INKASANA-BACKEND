@@ -33,3 +33,8 @@ data class AppointmentResponse(
     val price: BigDecimal?,
     val createdAt: LocalDateTime
 )
+
+/** Métricas ligeras para la portada del dashboard del tenant. */
+data class AppointmentSummaryResponse(
+    val confirmedAppointments: Long
+)

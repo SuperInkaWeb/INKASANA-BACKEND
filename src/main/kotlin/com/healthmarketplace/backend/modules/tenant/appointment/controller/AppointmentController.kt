@@ -14,6 +14,10 @@ import java.util.UUID
 @RestController
 @RequestMapping("/api/tenant/appointments")
 class AppointmentController(private val appointmentService: AppointmentService) {
+    @GetMapping("/summary")
+    @PreAuthorize("hasAnyRole('OWNER','ADMIN','DOCTOR','THERAPIST','RECEPTIONIST')")
+    fun summary() = appointmentService.summary()
+
     @PostMapping
     @PreAuthorize("hasAnyRole('OWNER','ADMIN','DOCTOR','THERAPIST','RECEPTIONIST','PATIENT')")
     fun create(@Valid @RequestBody request: CreateAppointmentRequest) = appointmentService.create(request)
