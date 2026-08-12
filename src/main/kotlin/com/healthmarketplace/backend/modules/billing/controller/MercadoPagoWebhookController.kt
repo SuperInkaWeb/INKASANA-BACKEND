@@ -24,11 +24,13 @@ class MercadoPagoWebhookController(
         @RequestParam("data.id", required = false) dataId: String?,
         @RequestBody(required = false) payload: JsonNode?
     ) {
+        val eventType = payload?.path("type")?.asText().orEmpty()
+            .ifBlank { payload?.path("action")?.asText()?.substringBefore('.') ?: "" }
         mercadoPagoWebhookService.process(
             xSignature = xSignature,
             xRequestId = xRequestId,
             dataId = dataId ?: payload?.path("data")?.path("id")?.asText(),
-            type = payload?.path("type")?.asText()
+            type = eventType
         )
     }
 }

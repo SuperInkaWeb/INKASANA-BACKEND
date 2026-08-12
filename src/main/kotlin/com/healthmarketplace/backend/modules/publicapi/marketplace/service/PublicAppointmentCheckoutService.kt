@@ -55,7 +55,9 @@ class PublicAppointmentCheckoutService(
             checkoutId, organizationId, profile.schemaName, patientProfileId, request.doctorId, request.date, request.time,
             amountCents, mercadoPagoProperties.currency.uppercase()
         )
-        val returnUrl = "${mercadoPagoProperties.frontendUrl}/marketplace/doctors/${profile.slug}"
+        // La reserva se inició desde el marketplace de la clínica; al terminar
+        // el pago debe volver allí, no al perfil público aislado del doctor.
+        val returnUrl = "${mercadoPagoProperties.frontendUrl}/marketplace/clinics/${profile.tenantSlug}"
         val response = mercadoPagoClient.post(
             "/checkout/preferences",
             mapOf(

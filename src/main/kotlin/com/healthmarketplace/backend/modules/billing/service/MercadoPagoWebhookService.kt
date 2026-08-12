@@ -33,6 +33,7 @@ class MercadoPagoWebhookService(
 ) {
     @Transactional
     fun process(xSignature: String?, xRequestId: String?, dataId: String?, type: String?) {
+        println("Mercado Pago webhook recibido: type=$type, paymentOrPreapprovalId=$dataId, requestId=$xRequestId")
         require(mercadoPagoProperties.webhookSecret.isNotBlank()) { "MERCADOPAGO_WEBHOOK_SECRET es obligatoria para recibir webhooks" }
         require(!xSignature.isNullOrBlank() && !xRequestId.isNullOrBlank() && !dataId.isNullOrBlank()) { "Webhook de Mercado Pago incompleto" }
         try {
@@ -49,6 +50,7 @@ class MercadoPagoWebhookService(
         when (type) {
             "subscription_preapproval" -> synchronizeSubscription(dataId)
             "payment" -> synchronizeAppointmentPayment(dataId)
+            else -> println("Mercado Pago webhook ignorado: tipo no manejado '$type'")
         }
     }
 
@@ -91,6 +93,7 @@ class MercadoPagoWebhookService(
 
         val status = payment.path("status").asText().lowercase()
         if (status != "approved") {
+            println("Pago de cita $mercadoPagoPaymentId todavía no aprobado: $status")
             jdbcTemplate.update(
                 "UPDATE appointment_payment_checkouts SET status = ?, updated_at = NOW() WHERE id = ?",
                 status.uppercase(), checkout.id
@@ -126,6 +129,7 @@ class MercadoPagoWebhookService(
             """.trimIndent(), mercadoPagoPaymentId, appointmentId, paidAt, checkout.id
         )
         saveBillingRecords(checkout, mercadoPagoPaymentId, paidAt)
+        println("Cita pagada creada: appointmentId=$appointmentId, paymentId=$mercadoPagoPaymentId")
     }
 
     private fun synchronizeSubscriptionPayment(reference: String, payment: com.fasterxml.jackson.databind.JsonNode, paymentId: String) {
